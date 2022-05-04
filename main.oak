@@ -1,0 +1,186 @@
+// rush works on many files at once
+
+{
+	println: println
+	default: default
+	map: map
+	each: each
+	take: take
+	last: last
+	slice: slice
+	stdin: stdin
+	append: append
+	filter: filter
+	rindexOf: rindexOf
+} := import('std')
+{
+	split: split
+	endsWith?: endsWith?
+} := import('str')
+fs := import('fs')
+cli := import('cli')
+fmt := import('fmt')
+sort := import('sort')
+path := import('path')
+debug := import('debug')
+datetime := import('datetime')
+
+Version := '1.0'
+
+Cli := with cli.parseArgv() if {
+	args().1 |> default('') |> endsWith?('main.oak') -> args()
+	_ -> ['oak', 'rush.oak'] |> append(args() |> slice(1))
+}
+
+if Cli.opts.version != ? -> {
+	fmt.printf('Rush v{{0}}', Version)
+	exit(0)
+}
+
+if Cli.opts.help != ? | Cli.opts.h != ? -> {
+	println('Rush moves many files at once.
+
+Usage
+	rush [cmd] [src-files] [rename-spec] [options]
+
+Options
+	--[h]elp    Show this help message
+	--stdin     Receive source files list from STDIN
+	--[d]ry-run Print all operations, but do not run them
+	--[v]erbose Print all executed commands as they are run
+	--version   Print version information and exit
+	--debug     Print CLI arguments for debugging then exit
+
+Template parameters
+	path        Full absolute path of the file
+	            e.g. "/home/me/image.jpg"
+	dir         Directory of the file
+	            e.g. "/home/me"
+	fullname    Entire file name, including ext
+	            e.g. "image.jpg"
+	name        File name, without the ext
+	            e.g. "image"
+	ext         Extension of the file (string after last \'.\')
+	            e.g. "jpg"
+	i           Integer index of this file when the file list is
+	            sorted lexicographically
+				e.g. "10"
+	mtime       Last-modified time of the file as a UNIX timestamp
+	            e.g. "1651654423"
+	mdate       Last-modified date of the file as an ISO date string
+	            e.g. "2022-05-04"
+	len         Size of the file in bytes
+	            e.g. "4094"
+
+Examples
+	Change extensions
+		rush mv *.jpeg \'{{name}}.jpg\'
+	Rename all PDF files to numbers
+		rush mv *.pdf \'{{i}}.pdf\'
+	Add a prefix "secret" to all files, but don\'t delete originals
+		rush cp * \'secret-{{fullname}}\'
+	Add last-modified times to photos and put them in folders by dates
+		rush mv * \'{{mdate}}/{{name}}-{{mtime}}.{{ext}}\'
+	Convert all PNGs to JPGs using ImageMagick "convert"
+		rush convert *.png \'{{name}}.jpg\'
+')
+	exit(0)
+}
+
+if Cli.verb = ? -> {
+	println('No command provided.')
+	exit(1)
+}
+
+// the input (source) files are normally all CLI arguments except the last, but
+// may be overridden with the --stdin flag.
+srcPaths := if {
+	Cli.opts.stdin -> stdin() |> split('\n') |> filter(fn(s) s != '')
+	len(Cli.args) > 0 -> Cli.args |> take(len(Cli.args) - 1)
+	_ -> {
+		println('No source files provided.')
+		exit(1)
+	}
+}
+
+// the rename spec is always the last CLI argument
+destSpec := Cli.args |> last()
+if destSpec = ? -> {
+	println('No rename spec provided.')
+	exit(1)
+}
+// sanity check the rename spec
+//
+// If the rename spec is not an Oak template string, the user has probably made
+// a mistake, and we need to abort.
+if destSpec |> fmt.format({}) = destSpec -> {
+	fmt.printf('Constant rename spec "{{0}}".', destSpec)
+	exit(1)
+}
+
+if Cli.opts.debug != ? -> {
+	debug.println({
+		exe: Cli.exe
+		main: Cli.main
+		opts: Cli.opts
+		src: srcPaths
+		dest: destSpec
+	})
+	exit(0)
+}
+
+Mappings := srcPaths |> sort.sort() |> with map() fn(src, i) {
+	srcPath := path.resolve(src)
+	[srcDir, srcFile] := path.cut(srcPath)
+
+	extDotIdx := srcFile |> rindexOf('.')
+	srcName := srcFile |> slice(0, extDotIdx)
+	srcExt := srcFile |> slice(extDotIdx + 1)
+
+	stat := fs.statFile(srcPath)
+	if stat = ? -> {
+		println('Could not stat "{{0}}".', srcPath)
+		exit(1)
+	}
+
+	dest := destSpec |> fmt.format({
+		path: srcPath
+		dir: srcDir
+		fullname: srcFile
+		name: srcName
+		ext: srcExt
+		i: i
+		mtime: stat.mod
+		mdate: datetime.format(stat.mod) |> take(10)
+		len: stat.len
+	})
+
+	{
+		src: src
+		dest: dest
+	}
+}
+
+Cmd := Cli.verb
+Mappings |> with each() fn(mapping) {
+	cmdline := fmt.format('{{0}} {{1}} {{2}}', Cmd, mapping.src, mapping.dest)
+	if {
+		Cli.opts.d, Cli.opts.'dry-run' -> println(cmdline)
+		_ -> {
+			if Cli.opts.verbose = true | Cli.opts.v = true -> println(cmdline)
+
+			evt := exec(Cmd, [mapping.src, mapping.dest], '')
+			if evt.type = :error -> {
+				fmt.printf('Could not {{0}} "{{1}}" to "{{2}}".', Cmd, mapping.src, mapping.dest)
+				println('[error] ' + evt.message)
+				exit(1)
+			}
+			if evt.status != 0 -> {
+				fmt.printf('Could not {{0}} "{{1}}" to "{{2}}".', Cmd, mapping.src, mapping.dest)
+				println(evt.stdout + evt.stderr)
+				exit(1)
+			}
+		}
+	}
+}
+
