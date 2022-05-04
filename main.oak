@@ -1,4 +1,4 @@
-// rush works on many files at once
+// rush lets you work on many files at once
 
 {
 	println: println
@@ -11,9 +11,13 @@
 	stdin: stdin
 	append: append
 	filter: filter
+	compact: compact
 	rindexOf: rindexOf
+	contains?: contains?
 } := import('std')
 {
+	lower: lower
+	trim: trim
 	split: split
 	endsWith?: endsWith?
 } := import('str')
@@ -38,7 +42,7 @@ if Cli.opts.version != ? -> {
 }
 
 if Cli.opts.help != ? | Cli.opts.h != ? -> {
-	println('Rush moves many files at once.
+	println('Rush lets you work on many files at once.
 
 Usage
 	rush [cmd] [src-files] [rename-spec] [options]
@@ -49,6 +53,7 @@ Options
 	--[d]ry-run Print all operations, but do not run them
 	--[v]erbose Print all executed commands as they are run
 	--version   Print version information and exit
+	--[f]orce   Overwrite any conflicting files
 	--debug     Print CLI arguments for debugging then exit
 
 Template parameters
@@ -161,9 +166,49 @@ Mappings := srcPaths |> sort.sort() |> with map() fn(src, i) {
 	}
 }
 
+// For any files whose destination file already exists, ask the user if it
+// should be overwritten. If yes, mark it as an overwrite to log later. If no,
+// remove it from the mappings list.
+Overwrites := []
+Force? := Cli.opts.f != ? | Cli.opts.force != ?
+fn askOverwrite?(dest) {
+	print(fmt.format('"{{0}}" already exists. Overwrite? [y/N] ', dest))
+	evt := input()
+	if evt.type {
+		:error -> {
+			println('Could not read input.')
+			exit(1)
+		}
+		_ -> {
+			response := evt.data |> trim() |> lower()
+			response = 'y' | response = 'yes'
+		}
+	}
+}
+Mappings |> with each() fn(mapping, i) {
+	{ src: src, dest: dest } := mapping
+	stat := fs.statFile(dest)
+	if stat != ? -> {
+		if {
+			Force?, askOverwrite?(dest) -> Overwrites << dest
+			_ -> {
+				fmt.printf('Skipping "{{0}}".', src)
+				Mappings.(i) := ?
+			}
+		}
+	}
+}
+Mappings <- Mappings |> compact()
+
 Cmd := Cli.verb
 Mappings |> with each() fn(mapping) {
-	cmdline := fmt.format('{{0}} {{1}} {{2}}', Cmd, mapping.src, mapping.dest)
+	cmdline := fmt.format(
+		'{{0}} {{1}} {{2}}'
+		Cmd, mapping.src, mapping.dest
+	) + if Overwrites |> contains?(mapping.dest) {
+		true -> ' (overwritten)'
+		_ -> ''
+	}
 	if {
 		Cli.opts.d, Cli.opts.'dry-run' -> println(cmdline)
 		_ -> {
