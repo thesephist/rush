@@ -149,7 +149,7 @@ Mappings := srcPaths |> sort.sort() |> with map() fn(src, i) {
 
 	stat := fs.statFile(srcPath)
 	if stat = ? -> {
-		println('Could not stat "{{0}}".', srcPath)
+		fmt.printf('Could not stat "{{0}}".', srcPath)
 		exit(1)
 	}
 
