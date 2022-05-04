@@ -61,15 +61,16 @@ Template parameters
 	            e.g. "/home/me/image.jpg"
 	dir         Directory of the file
 	            e.g. "/home/me"
-	fullname    Entire file name, including ext
+	fullname    Entire file name, including extension
 	            e.g. "image.jpg"
-	name        File name, without the ext
+	name        File name, without the extension
 	            e.g. "image"
-	ext         Extension of the file (string after last \'.\')
+	ext         Extension of the file (string after last \'.\', or
+	            empty string if there is no \'.\')
 	            e.g. "jpg"
 	i           Integer index of this file when the file list is
 	            sorted lexicographically
-				e.g. "10"
+	            e.g. "10"
 	mtime       Last-modified time of the file as a UNIX timestamp
 	            e.g. "1651654423"
 	mdate       Last-modified date of the file as an ISO date string
@@ -138,9 +139,13 @@ Mappings := srcPaths |> sort.sort() |> with map() fn(src, i) {
 	srcPath := path.resolve(src)
 	[srcDir, srcFile] := path.cut(srcPath)
 
-	extDotIdx := srcFile |> rindexOf('.')
-	srcName := srcFile |> slice(0, extDotIdx)
-	srcExt := srcFile |> slice(extDotIdx + 1)
+	[srcName, srcExt] := if extDotIdx := srcFile |> rindexOf('.') {
+		-1 -> [srcFile, '']
+		_ -> [
+			srcFile |> slice(0, extDotIdx)
+			srcFile |> slice(extDotIdx + 1)
+		]
+	}
 
 	stat := fs.statFile(srcPath)
 	if stat = ? -> {
